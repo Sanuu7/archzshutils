@@ -31,9 +31,10 @@ It includes a shortcut to install SpotX (Spotify adblocker/unlocker).
 
 ## How to Install
 
-1. Download or clone this repository.
-2. Open a terminal in this folder.
-3. Run `./install.sh`
+Run this one-line command:
+```bash
+git clone https://github.com/Sanuu7/archzshutils.git && cd archzshutils && ./install.sh
+```
 
 The installer will verify everything and show you which power profiles are available on your specific machine.
 
