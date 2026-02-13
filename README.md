@@ -13,7 +13,6 @@ For example, if your system supports these modes, you can run:
 - `sanuu light` - Good for saving battery.
 - `sanuu balance` - Good for daily use.
 - `sanuu power` - Good for gaming or heavy tasks.
-- `sanuu performance` - Same as power.
 
 It will automatically check which profiles your computer actually has. You can see the full list by running `sanuu profiles`.
 
