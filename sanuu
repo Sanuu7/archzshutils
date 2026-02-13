@@ -1,0 +1,301 @@
+#!/bin/bash
+
+# Sanuu Command Tool
+# A utility script for Arch Linux users.
+
+# Colors for output
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# ACPI Platform Profile Path
+ACPI_PROFILE="/sys/firmware/acpi/platform_profile"
+ACPI_CHOICES="/sys/firmware/acpi/platform_profile_choices"
+
+# Helper function for logging
+log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+# Animation function
+run_with_animation() {
+    local message="$1"
+    shift
+    local command="$@"
+    
+    echo -ne "${BLUE}[WAIT]${NC} $message "
+    
+    # Run command in background
+    eval "$command" > /dev/null 2>&1 &
+    local pid=$!
+    
+    local delay=0.1
+    local spinstr='|/-\'
+    
+    while [ "$(ps a | awk '{print $1}' | grep $pid)" ]; do
+        local temp=${spinstr#?}
+        printf " [%c]  " "$spinstr"
+        local spinstr=$temp${spinstr%"$temp"}
+        sleep $delay
+        printf "\b\b\b\b\b\b"
+    done
+    
+    wait $pid
+    local exit_code=$?
+    
+    if [ $exit_code -eq 0 ]; then
+        printf "\b\b\b\b\b\b${GREEN}[DONE]${NC}\n"
+    else
+        printf "\b\b\b\b\b\b${RED}[FAIL]${NC}\n"
+    fi
+    return $exit_code
+}
+
+# Helper to request sudo if not root
+ensure_sudo() {
+    if [[ $EUID -ne 0 ]]; then
+        sudo -v
+        if [[ $? -ne 0 ]]; then
+            log_error "Sudo privileges are required for this operation."
+            exit 1
+        fi
+    fi
+}
+
+# Helper to get available profiles
+get_available_profiles() {
+    if [[ -f "$ACPI_CHOICES" ]]; then
+        cat "$ACPI_CHOICES"
+    else
+        echo ""
+    fi
+}
+
+# Helper to set ACPI profile
+set_profile() {
+    local target_profile="$1"
+    
+    # Check if profile exists
+    local available_profiles=$(get_available_profiles)
+    if [[ " $available_profiles " =~ " $target_profile " ]]; then
+        log_info "Selected: $target_profile mode"
+        ensure_sudo
+        log_info "Applying settings..."
+        
+        # Set ACPI Profile
+        echo "$target_profile" | sudo tee "$ACPI_PROFILE" > /dev/null
+        log_success "ACPI profile set to $target_profile."
+        
+        # CPU Governor Logic (Best Effort mapping)
+        if command -v cpupower &> /dev/null; then
+            local governor="powersave"
+            case "$target_profile" in
+                performance)
+                    governor="performance"
+                    ;;
+                balanced|balance)
+                    if grep -q "schedutil" /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors; then
+                        governor="schedutil"
+                    else
+                        governor="powersave"
+                    fi
+                    ;;
+                low-power|quiet|silent)
+                    governor="powersave"
+                    ;;
+            esac
+            sudo cpupower frequency-set -g "$governor" > /dev/null
+            log_success "CPU governor set to $governor."
+        fi
+        
+    else
+        log_error "Profile '$target_profile' is not available on this system."
+        log_info "Available profiles: $available_profiles"
+        exit 1
+    fi
+}
+
+# Helper to get total available space in KB
+# Sums available space of / and /home (deduplicating if they are the same)
+get_free_space_kb() {
+    # Check partitions for root and home user's cache
+    local home_dir
+    if [[ -n "$SUDO_USER" ]]; then
+        home_dir="/home/$SUDO_USER"
+    else
+        home_dir="$HOME"
+    fi
+    
+    df -k / "$home_dir" 2>/dev/null | tail -n +2 | awk '{print $1, $4}' | sort -u -k1,1 | awk '{sum+=$2} END {print sum}'
+}
+
+# clean logic extracted for reuse
+perform_cleanup() {
+    local deep=$1
+    
+    # Measure start space
+    local start_space=$(get_free_space_kb)
+    
+    # 1. Clean pacman cache
+    if command -v paccache &> /dev/null; then
+        run_with_animation "Cleaning pacman cache (older versions)..." "sudo paccache -r"
+        run_with_animation "Cleaning uninstalled packages cache..." "sudo paccache -ruk0"
+    else
+        run_with_animation "Cleaning all pacman cache..." "sudo pacman -Sc --noconfirm"
+    fi
+
+    # 2. Clean AUR helper cache (yay/paru)
+    if [[ $EUID -eq 0 && -n "$SUDO_USER" ]]; then
+         if command -v yay &> /dev/null; then
+             run_with_animation "Cleaning yay cache..." "sudo -u $SUDO_USER yay -Sc --noconfirm"
+         elif command -v paru &> /dev/null; then
+             run_with_animation "Cleaning paru cache..." "sudo -u $SUDO_USER paru -Sc --noconfirm"
+         fi
+    else
+         if command -v yay &> /dev/null; then
+             run_with_animation "Cleaning yay cache..." "yay -Sc --noconfirm"
+         elif command -v paru &> /dev/null; then
+             run_with_animation "Cleaning paru cache..." "paru -Sc --noconfirm"
+         fi
+    fi
+
+    # 3. Remove orphaned packages
+    if [[ $(pacman -Qtdq) ]]; then
+        run_with_animation "Removing orphaned packages..." "sudo pacman -Rns $(pacman -Qtdq) --noconfirm"
+    else
+        run_with_animation "Checking for orphaned packages..." "sleep 0.5"
+    fi
+
+    # 4. Vacuum journal logs
+    run_with_animation "Vacuuming system journal..." "sudo journalctl --vacuum-time=2weeks"
+
+    # 5. Deep Clean specific
+    if [[ "$deep" == "true" ]]; then
+        log_info "Starting Deep Clean operations..."
+        
+        # User cache (thumbnails)
+        if [[ -n "$SUDO_USER" ]]; then
+             run_with_animation "Clearing user thumbnails..." "sudo -u $SUDO_USER rm -rf /home/$SUDO_USER/.cache/thumbnails/*"
+        else
+             run_with_animation "Clearing user thumbnails..." "rm -rf $HOME/.cache/thumbnails/*"
+        fi
+        
+        # Temp files
+        run_with_animation "Clearing /tmp directory (safe removal)..." "sudo find /tmp -type f -atime +1 -delete"
+        run_with_animation "Clearing /var/tmp directory (safe removal)..." "sudo find /var/tmp -type f -atime +1 -delete"
+        
+        # Trash
+        if [[ -n "$SUDO_USER" ]]; then
+             run_with_animation "Emptying user trash..." "sudo -u $SUDO_USER rm -rf /home/$SUDO_USER/.local/share/Trash/*"
+        else
+             run_with_animation "Emptying trash..." "rm -rf $HOME/.local/share/Trash/*"
+        fi
+    fi
+    
+    # Measure end space
+    local end_space=$(get_free_space_kb)
+    
+    # Calculate difference
+    local diff_kb=$(( end_space - start_space ))
+    
+    # Handle case where diff is negative (downloads etc during run) or zero
+    if [[ $diff_kb -lt 0 ]]; then diff_kb=0; fi
+    
+    local diff_mb=$(awk "BEGIN {printf \"%.2f\", $diff_kb / 1024}")
+    
+    echo ""
+    echo -e "${GREEN}========================================${NC}"
+    echo -e "${GREEN}   CLEANUP COMPLETE${NC}"
+    echo -e "${GREEN}========================================${NC}"
+    echo -e "Reclaimed Space: ${YELLOW}${diff_mb} MB${NC}"
+    echo ""
+}
+
+# Subcommand: clean
+cmd_clean() {
+    log_info "Selected: System Cleanup"
+    ensure_sudo
+    log_info "Starting system cleanup..."
+    perform_cleanup "false"
+}
+
+# Subcommand: deepclean
+cmd_deepclean() {
+    log_info "Selected: Deep System Cleanup"
+    ensure_sudo
+    log_info "Starting deep system cleanup..."
+    perform_cleanup "true"
+}
+
+# Subcommand: profiles
+cmd_profiles() {
+    log_info "Detecting available power profiles..."
+    local profiles=$(get_available_profiles)
+    if [[ -z "$profiles" ]]; then
+        log_warn "No ACPI platform profiles detected."
+    else
+        echo -e "${GREEN}Available Profiles:${NC}"
+        for p in $profiles; do
+            echo "  - $p"
+        done
+        echo ""
+        echo "You can run these as commands: sanuu <profile_name>"
+    fi
+}
+
+# Subcommand: help
+cmd_help() {
+    echo -e "${GREEN}Sanuu Command Tool${NC}"
+    echo "Usage: sanuu [command]"
+    echo ""
+    echo "Commands:"
+    echo "  clean         Clean system cache, orphans, and logs"
+    echo "  deepclean     Same as clean + temp files, trash, thumbnails"
+    echo "  profiles      List detected power profiles"
+    
+    local profiles=$(get_available_profiles)
+    if [[ -n "$profiles" ]]; then
+        echo ""
+        echo "Detected Power Profiles (Dynamic):"
+        for p in $profiles; do
+            echo "  $p"
+        done
+    fi
+    
+    echo "  help          Show this help message"
+}
+
+# Main logic
+case "$1" in
+    clean)
+        cmd_clean
+        ;;
+    deepclean)
+        cmd_deepclean
+        ;;
+    profiles)
+        cmd_profiles
+        ;;
+    help|--help|-h)
+        cmd_help
+        ;;
+    *)
+        # Dynamic Profile Check
+        if [[ -n "$1" ]]; then
+            # Check if ACPI profiles exist
+             if [[ -f "$ACPI_CHOICES" ]]; then
+                 if grep -q "$1" "$ACPI_CHOICES"; then
+                     set_profile "$1"
+                     exit 0
+                 fi
+             fi
+        fi
+        
+        log_error "Unknown command: $1"
+        cmd_help
+        exit 1
+        ;;
+esac
