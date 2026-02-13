@@ -38,8 +38,21 @@ check_sudo
 
 echo -e "\033[1;34m[INFO] Installing $SCRIPT_NAME...\033[0m"
 
+# Get current git hash
+CURRENT_HASH=$(git rev-parse HEAD 2>/dev/null)
+if [[ -z "$CURRENT_HASH" ]]; then
+    CURRENT_HASH="manual-install-$(date +%s)"
+    echo -e "\033[1;33m[WARN] Could not detect git hash. Using timestamp.\033[0m"
+fi
+
+# Prepare temp file with injected hash
+TEMP_FILE="/tmp/$SCRIPT_NAME.tmp"
+cp "$SCRIPT_NAME" "$TEMP_FILE"
+sed -i "s/INSTALLED_HASH=\"Unknown\"/INSTALLED_HASH=\"$CURRENT_HASH\"/" "$TEMP_FILE"
+
 # Copy script with sudo
-sudo cp "$SCRIPT_NAME" "$INSTALL_DIR/"
+sudo cp "$TEMP_FILE" "$INSTALL_DIR/$SCRIPT_NAME"
+rm "$TEMP_FILE"
 
 # Make executable
 sudo chmod +x "$INSTALL_DIR/$SCRIPT_NAME"
