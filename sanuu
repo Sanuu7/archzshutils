@@ -288,6 +288,19 @@ cmd_deepclean() {
     perform_cleanup "true"
 }
 
+# Subcommand: spotify
+cmd_spotify() {
+    log_info "Selected: Spotify Unlocker (SpotX)"
+    log_info "Launching SpotX installer..."
+    
+    # Run SpotX script as requested
+    if bash <(curl -sSL https://spotx-official.github.io/run.sh); then
+        log_success "SpotX script finished."
+    else
+        log_error "SpotX script failed to run."
+    fi
+}
+
 # Subcommand: profiles
 cmd_profiles() {
     log_info "Detecting available power profiles..."
@@ -312,6 +325,7 @@ cmd_help() {
     echo "Commands:"
     echo "  clean         Clean system cache, orphans, and logs"
     echo "  deepclean     Same as clean + temp files, trash, thumbnails"
+    echo "  spotify       Run SpotX Spotify unlocker"
     echo "  profiles      List detected power profiles"
     
     local profiles=$(get_available_profiles)
@@ -338,6 +352,9 @@ case "$1" in
         ;;
     deepclean)
         cmd_deepclean
+        ;;
+    spotify)
+        cmd_spotify
         ;;
     profiles)
         cmd_profiles

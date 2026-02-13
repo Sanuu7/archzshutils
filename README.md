@@ -24,6 +24,11 @@ It can also clean up your system.
 
 When it finishes cleaning, it will tell you exactly how much space was recovered.
 
+### Spotify Unlocker
+It includes a shortcut to install SpotX (Spotify adblocker/unlocker).
+
+- `sanuu spotify` - Runs the official SpotX installation script directly.
+
 ## How to Install
 
 1. Download or clone this repository.
