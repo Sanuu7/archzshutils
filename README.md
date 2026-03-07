@@ -1,43 +1,44 @@
-# Sanuu Command Tool
+# Sanuu Command Tool 🚀
 
-This is a simple utility script I wrote for Arch Linux to help manage system performance and keep things clean.
+A powerful, all-in-one utility script for Arch Linux to manage performance, maintain system health, and keep storage lean.
 
-## What does it do?
+## ✨ Features
 
-It helps you control your computer's power modes and clean up junk files.
+### 🛠️ System Maintenance
+- **`sanuu clean`**: Standard cleanup. Clears old package caches (keeps 2 versions), AUR helper caches, and orphans.
+- **`sanuu deepclean`**: Everything in `clean` plus thumbnails, trash, and temporary files.
+- **`sanuu optmirror`**: Automatically finds the 10 fastest HTTPS mirrors in your country using `reflector`.
+- **`sanuu systemupdate`**: Unified update for official repositories, AUR packages (`yay`/`paru`), and Flatpaks.
+- **`sanuu checkpackageupdates`**: Safe preview of all pending updates without installing them.
 
-### Power Profiles
-It looks at what your computer's motherboard (BIOS) supports and lets you switch between modes easily.
+### 📊 Health & Monitoring
+- **`sanuu health`**: A clean dashboard showing failed services, disk usage, and CPU temperature.
+- **`sanuu battery`**: Detailed life and health report for laptops (charge, health %, wattage, and cycles).
 
-For example, if your system supports these modes, you can run:
-- `sanuu light` - Good for saving battery.
-- `sanuu balance` - Good for daily use.
-- `sanuu power` - Good for gaming or heavy tasks.
+### ⚡ Performance & Apps
+- **`sanuu profiles`**: Lists available ACPI power profiles (Performance, Balanced, Power-Saving).
+- **`sanuu <profile_name>`**: Switch power profiles instantly.
+- **`sanuu spotify`**: Install/Update SpotX (Spotify Adblocker).
+- **`sanuu antigravity`**: Install/Update the latest binary releases of Antigravity.
 
-It will automatically check which profiles your computer actually has. You can see the full list by running `sanuu profiles`.
+---
 
-### System Cleaning
-It can also clean up your system.
+## 📦 How to Install
 
-- `sanuu clean` - This does a standard cleanup. It clears out old package caches (pacman), helper caches (yay/paru), removes orphaned packages that nothing uses anymore, and trims system logs.
-- `sanuu deepclean` - This does everything above, plus it clears out thumbnail caches, emptying the trash, and safely removing temporary files that are more than a day old.
-
-When it finishes cleaning, it will tell you exactly how much space was recovered.
-
-### Spotify Unlocker
-It includes a shortcut to install SpotX (Spotify adblocker/unlocker).
-
-- `sanuu spotify` - Runs the official SpotX installation script directly.
-
-## How to Install
-
-Run this one-line command:
+Run this one-line command to get started:
 ```bash
 git clone https://github.com/Sanuu7/archzshutils.git && cd archzshutils && ./install.sh
 ```
 
-The installer will verify everything and show you which power profiles are available on your specific machine.
+The installer handles all dependencies (like `pacman-contrib`) and verifies your hardware support.
 
-## How to Uninstall
+## 🗑️ How to Uninstall
 
-If you want to remove it, just run `./uninstall.sh` and it will remove all traces of the tool from your system.
+Run the uninstaller from the repository:
+```bash
+./uninstall.sh
+```
+It will safely remove the tool and optionally clean up the dependencies it installed.
+
+---
+*Created with ❤️ for Arch Linux users.*
