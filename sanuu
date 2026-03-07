@@ -33,28 +33,25 @@ run_with_animation() {
     local command="$@"
     
     local start_kb=$(get_free_space_kb)
+    local log_file="/tmp/sanuu_step.log"
+    
     echo -ne "${BLUE}[WAIT]${NC} $message"
-    
-    local log_file="/tmp/sanuu_last_error.log"
-    
-    # Run command in background
-    eval "$command" > /dev/null 2> "$log_file" &
-    local pid=$!
-    
-    local delay=0.1
-    local spinstr='|/-\'
     
     # Hide cursor
     tput civis
     
+    # Run command and capture output
+    eval "$command" > /dev/null 2> "$log_file" &
+    local pid=$!
+    
+    local spinstr='|/-\'
     while kill -0 $pid 2>/dev/null; do
         local temp=${spinstr#?}
         printf " ${BLUE}[%c]${NC}" "$spinstr"
         local spinstr=$temp${spinstr%"$temp"}
-        sleep $delay
+        sleep 0.1
         printf "\b\b\b\b"
     done
-    
     wait $pid
     local exit_code=$?
     
@@ -64,15 +61,22 @@ run_with_animation() {
     local end_kb=$(get_free_space_kb)
     local diff_kb=$(( end_kb - start_kb ))
     if [[ $diff_kb -lt 0 ]]; then diff_kb=0; fi
-    local diff_mb=$(awk "BEGIN {printf \"%.2f\", $diff_kb / 1024}")
     
-    # Clear the spinner area and print final status
+    # Convert to MB or KB depending on size
+    local reclaimed_text
+    if [[ $diff_kb -ge 1024 ]]; then
+        local diff_mb=$(awk "BEGIN {printf \"%.2f\", $diff_kb / 1024}")
+        reclaimed_text="${YELLOW}${diff_mb} MB${NC}"
+    else
+        reclaimed_text="${YELLOW}${diff_kb} KB${NC}"
+    fi
+
     if [ $exit_code -eq 0 ]; then
-        echo -e " ${GREEN}[DONE]${NC} (${YELLOW}${diff_mb} MB${NC})"
+        echo -e " ${GREEN}[DONE]${NC} ($reclaimed_text)"
     else
         echo -e " ${RED}[FAIL]${NC}"
-        if [[ -f "$log_file" ]]; then
-            log_error "Reason: $(tail -n 1 "$log_file")"
+        if [[ -f "$log_file" && -s "$log_file" ]]; then
+            echo -e "       ${RED}└─ Reason:${NC} $(tail -n 1 "$log_file" | sed 's/^error: //')"
         fi
     fi
     rm -f "$log_file"
@@ -245,12 +249,8 @@ perform_cleanup() {
     fi
 
     # 3. Remove orphaned packages
-    local orphans=$(pacman -Qtdq)
+    local orphans=$(pacman -Qtdq | tr '\n' ' ')
     if [[ -n "$orphans" ]]; then
-        # Check for pacman lock
-        if [[ -f /var/lib/pacman/db.lck ]]; then
-            run_with_animation "Waiting for pacman database lock..." "while [ -f /var/lib/pacman/db.lck ]; do sleep 1; done"
-        fi
         run_with_animation "Removing orphaned packages..." "sudo pacman -Rns $orphans --noconfirm"
     else
         run_with_animation "Checking for orphaned packages..." "sleep 0.5"
