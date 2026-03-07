@@ -72,3 +72,14 @@ if [[ $FOUND -eq 0 ]]; then
 else
     echo -e "\033[0;32m[SUCCESS] Uninstallation complete.\033[0m"
 fi
+
+# Optional: Remove dependencies
+if command -v paccache &> /dev/null; then
+    echo ""
+    read -p "Do you want to remove the dependency 'pacman-contrib' as well? (y/n): " dep_choice
+    if [[ "$dep_choice" == "y" || "$dep_choice" == "Y" ]]; then
+        echo -e "\033[1;34m[INFO] Removing pacman-contrib...\033[0m"
+        sudo pacman -Rs --noconfirm pacman-contrib
+        echo -e "\033[0;32m[SUCCESS] pacman-contrib removed.\033[0m"
+    fi
+fi

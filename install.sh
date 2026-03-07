@@ -36,6 +36,18 @@ check_sudo() {
 echo -e "\033[1;34m[INFO] Checking permissions...\033[0m"
 check_sudo
 
+# Install dependencies
+echo -e "\033[1;34m[INFO] Checking for dependencies...\033[0m"
+if ! command -v paccache &> /dev/null; then
+    echo -e "\033[1;33m[NOTE] pacman-contrib is required for cache cleaning. Installing...\033[0m"
+    sudo pacman -S --noconfirm pacman-contrib
+    if [[ $? -ne 0 ]]; then
+        echo -e "\033[0;31m[ERROR] Failed to install pacman-contrib. Cleanup features may be limited.\033[0m"
+    else
+        echo -e "\033[0;32m[SUCCESS] pacman-contrib installed.\033[0m"
+    fi
+fi
+
 echo -e "\033[1;34m[INFO] Installing $SCRIPT_NAME...\033[0m"
 
 # Get current git hash

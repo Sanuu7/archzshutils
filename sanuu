@@ -198,12 +198,8 @@ perform_cleanup() {
     local start_space=$(get_free_space_kb)
     
     # 1. Clean pacman cache
-    if command -v paccache &> /dev/null; then
-        run_with_animation "Cleaning pacman cache (older versions)..." "sudo paccache -r"
-        run_with_animation "Cleaning uninstalled packages cache..." "sudo paccache -ruk0"
-    else
-        run_with_animation "Cleaning all pacman cache..." "sudo pacman -Sc --noconfirm"
-    fi
+    run_with_animation "Cleaning pacman cache (keep latest 2)..." "sudo paccache -rk2"
+    run_with_animation "Cleaning uninstalled packages cache..." "sudo paccache -ruk0"
 
     # 2. Clean AUR helper cache (yay/paru)
     if [[ $EUID -eq 0 && -n "$SUDO_USER" ]]; then
@@ -301,6 +297,206 @@ cmd_spotify() {
     fi
 }
 
+# Subcommand: antigravity
+cmd_antigravity() {
+    log_info "Selected: Antigravity Installer"
+    log_info "This is for Arch users who want to install Antigravity and update it as soon as a release happens (when the AUR packages are not out yet)."
+    log_info "Launching Antigravity installer..."
+    
+    if bash <(curl -sSL https://raw.githubusercontent.com/BOTOOM/google-antigravity-bin-arch/main/install_antigravity); then
+        log_success "Antigravity installer finished."
+    else
+        log_error "Antigravity installer failed to run."
+    fi
+}
+
+# Subcommand: optmirror
+cmd_optmirror() {
+    log_info "Selected: Optimize Mirrors"
+    if ! command -v reflector &> /dev/null; then
+        log_warn "Reflector is not installed. Installing it now..."
+        ensure_sudo
+        sudo pacman -S --noconfirm reflector
+    fi
+
+    ensure_sudo
+    log_info "Finding the 10 fastest mirrors in your country..."
+    run_with_animation "Updating mirrorlist (this may take a minute)..." "sudo reflector --latest 10 --protocol https --sort rate --save /etc/pacman.d/mirrorlist"
+    
+    if [[ $? -eq 0 ]]; then
+        log_success "Mirrorlist optimized successfully!"
+    else
+        log_error "Failed to optimize mirrors."
+    fi
+}
+
+# Subcommand: health
+cmd_health() {
+    log_info "Selected: System Health Dashboard"
+    echo -e "${BLUE}========================================${NC}"
+    echo -e "${GREEN}   SYSTEM HEALTH REPORT${NC}"
+    echo -e "${BLUE}========================================${NC}"
+
+    # 1. Systemd Failed Units
+    local failed_units=$(systemctl --failed --quiet | grep "loaded units listed" | awk '{print $1}')
+    if [[ -z "$failed_units" || "$failed_units" == "0" ]]; then
+        echo -e "Systemd Services: ${GREEN}[OK]${NC} No failed units."
+    else
+        echo -e "Systemd Services: ${RED}[ERROR]${NC} $failed_units units failed!"
+        systemctl --failed --no-legend --no-pager
+    fi
+
+    # 2. Disk Usage (Root)
+    local root_usage=$(df -h / | tail -1 | awk '{print $5}' | sed 's/%//')
+    if [[ $root_usage -gt 90 ]]; then
+        echo -e "Disk Usage (/):   ${RED}[CRITICAL]${NC} ${root_usage}% full!"
+    elif [[ $root_usage -gt 75 ]]; then
+        echo -e "Disk Usage (/):   ${YELLOW}[WARN]${NC} ${root_usage}% full."
+    else
+        echo -e "Disk Usage (/):   ${GREEN}[OK]${NC} ${root_usage}% used."
+    fi
+
+    # 3. CPU Temperature
+    if command -v sensors &> /dev/null; then
+        local temp=$(sensors | grep "Package id 0:" | awk '{print $4}' | sed 's/+//;s/°C//')
+        if [[ -n "$temp" ]]; then
+            if (( $(echo "$temp > 80" | bc -l) )); then
+                echo -e "CPU Temp:         ${RED}[HOT]${NC} ${temp}°C"
+            else
+                echo -e "CPU Temp:         ${GREEN}[OK]${NC} ${temp}°C"
+            fi
+        fi
+    fi
+
+    # 4. Broken Packages
+    local broken=$(pacman -Qk 2>/dev/null | grep -v "0 missing files" | wc -l)
+    if [[ $broken -eq 0 ]]; then
+        echo -e "Storage Integrity: ${GREEN}[OK]${NC} No missing files in local database."
+    else
+        echo -e "Storage Integrity: ${YELLOW}[WARN]${NC} $broken packages have missing files!"
+    fi
+
+    echo -e "${BLUE}========================================${NC}"
+}
+
+# Subcommand: systemupdate
+cmd_systemupdate() {
+    log_info "Selected: Unified System Update"
+    ensure_sudo
+    
+    # 1. Official Repos
+    log_info "Updating official repositories..."
+    sudo pacman -Syu --noconfirm
+
+    # 2. AUR Helper
+    if command -v yay &> /dev/null; then
+        log_info "Updating AUR packages (yay)..."
+        yay -Sua --noconfirm
+    elif command -v paru &> /dev/null; then
+        log_info "Updating AUR packages (paru)..."
+        paru -Sua --noconfirm
+    fi
+
+    # 3. Flatpak
+    if command -v flatpak &> /dev/null; then
+        log_info "Updating Flatpaks..."
+        flatpak update -y
+    fi
+
+    log_success "System update complete!"
+}
+# Subcommand: checkpackageupdates
+cmd_checkpackageupdates() {
+    log_info "Selected: Safe Update Preview"
+    
+    if ! command -v checkupdates &> /dev/null; then
+        log_warn "checkupdates is required (part of pacman-contrib). Installing..."
+        ensure_sudo
+        sudo pacman -S --noconfirm pacman-contrib
+    fi
+
+    log_info "Checking official repositories for updates..."
+    local updates=$(checkupdates)
+    if [[ -z "$updates" ]]; then
+        log_success "Scale: 0 updates. Your official repos are current!"
+    else
+        echo -e "${GREEN}Available Official Updates:${NC}"
+        echo "$updates" | column -t
+        local count=$(echo "$updates" | wc -l)
+        echo -e "\nTotal: ${YELLOW}$count${NC} packages"
+    fi
+
+    # AUR check
+    if command -v yay &> /dev/null; then
+        echo ""
+        log_info "Checking AUR for updates (yay)..."
+        local aur_updates=$(yay -Qua)
+        if [[ -z "$aur_updates" ]]; then
+            log_success "AUR is current!"
+        else
+            echo -e "${GREEN}Available AUR Updates:${NC}"
+            echo "$aur_updates" | column -t
+        fi
+    fi
+}
+
+# Subcommand: battery
+cmd_battery() {
+    log_info "Selected: Battery Health Dashboard"
+    
+    local bat_path=""
+    for b in /sys/class/power_supply/BAT*; do
+        if [[ -d "$b" ]]; then
+            bat_path="$b"
+            break
+        fi
+    done
+
+    if [[ -z "$bat_path" ]]; then
+        log_error "No battery detected on this system."
+        return
+    fi
+
+    echo -e "${BLUE}========================================${NC}"
+    echo -e "${GREEN}   BATTERY STATUS REPORT${NC}"
+    echo -e "${BLUE}========================================${NC}"
+
+    local status=$(cat "$bat_path/status")
+    local capacity=$(cat "$bat_path/capacity")
+    local model=$(cat "$bat_path/model_name")
+    
+    # Energy in uWh
+    local energy_full=$(cat "$bat_path/energy_full")
+    local energy_design=$(cat "$bat_path/energy_full_design")
+    local power_now=$(cat "$bat_path/power_now") # in uW
+    local voltage_now=$(cat "$bat_path/voltage_now") # in uV
+    
+    # Calculate health
+    local health=$(echo "scale=2; ($energy_full / $energy_design) * 100" | bc -l)
+    
+    # Calculate Watts
+    local watts=$(echo "scale=2; $power_now / 1000000" | bc -l)
+
+    echo -e "Device:           ${BLUE}$model${NC}"
+    echo -e "Status:           ${YELLOW}$status${NC}"
+    
+    if [[ $capacity -gt 20 ]]; then
+        echo -e "Charge:           ${GREEN}$capacity%${NC}"
+    else
+        echo -e "Charge:           ${RED}$capacity% [LOW]${NC}"
+    fi
+
+    echo -e "Health:           ${GREEN}$health%${NC} of original capacity"
+    echo -e "Current Draw:     ${BLUE}$watts W${NC}"
+    
+    if [[ -f "$bat_path/cycle_count" ]]; then
+        local cycles=$(cat "$bat_path/cycle_count")
+        echo -e "Cycle Count:      ${BLUE}$cycles${NC}"
+    fi
+
+    echo -e "${BLUE}========================================${NC}"
+}
+
 # Subcommand: profiles
 cmd_profiles() {
     log_info "Detecting available power profiles..."
@@ -325,7 +521,13 @@ cmd_help() {
     echo "Commands:"
     echo "  clean         Clean system cache, orphans, and logs"
     echo "  deepclean     Same as clean + temp files, trash, thumbnails"
+    echo "  optmirror     Optimize mirrorlist using Reflector"
+    echo "  health        Show system health dashboard"
+    echo "  systemupdate  Update Repos, AUR, and Flatpaks"
+    echo "  checkpackageupdates  Safe preview of available updates"
+    echo "  battery       Show detailed battery health (Laptops)"
     echo "  spotify       Run SpotX Spotify unlocker"
+    echo "  antigravity   Install/Update Antigravity (latest release)"
     echo "  profiles      List detected power profiles"
     
     local profiles=$(get_available_profiles)
@@ -353,8 +555,26 @@ case "$1" in
     deepclean)
         cmd_deepclean
         ;;
+    optmirror)
+        cmd_optmirror
+        ;;
+    health)
+        cmd_health
+        ;;
+    systemupdate)
+        cmd_systemupdate
+        ;;
+    checkpackageupdates)
+        cmd_checkpackageupdates
+        ;;
+    battery)
+        cmd_battery
+        ;;
     spotify)
         cmd_spotify
+        ;;
+    antigravity)
+        cmd_antigravity
         ;;
     profiles)
         cmd_profiles
