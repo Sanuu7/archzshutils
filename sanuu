@@ -35,8 +35,10 @@ run_with_animation() {
     local start_kb=$(get_free_space_kb)
     echo -ne "${BLUE}[WAIT]${NC} $message"
     
+    local log_file="/tmp/sanuu_last_error.log"
+    
     # Run command in background
-    eval "$command" > /dev/null 2>&1 &
+    eval "$command" > /dev/null 2> "$log_file" &
     local pid=$!
     
     local delay=0.1
@@ -69,7 +71,11 @@ run_with_animation() {
         echo -e " ${GREEN}[DONE]${NC} (${YELLOW}${diff_mb} MB${NC})"
     else
         echo -e " ${RED}[FAIL]${NC}"
+        if [[ -f "$log_file" ]]; then
+            log_error "Reason: $(tail -n 1 "$log_file")"
+        fi
     fi
+    rm -f "$log_file"
     return $exit_code
 }
 
@@ -209,6 +215,15 @@ perform_cleanup() {
     
     # Measure start space
     local start_space=$(get_free_space_kb)
+
+    # Ensure no pacman lock
+    if [[ -f /var/lib/pacman/db.lck ]]; then
+        log_warn "Pacman database is locked. Waiting..."
+        while [[ -f /var/lib/pacman/db.lck ]]; do
+            sleep 1
+        done
+        log_success "Lock released."
+    fi
     
     # 1. Clean pacman cache
     run_with_animation "Cleaning pacman cache (keep latest 2)..." "sudo paccache -rk2"
@@ -230,8 +245,13 @@ perform_cleanup() {
     fi
 
     # 3. Remove orphaned packages
-    if [[ $(pacman -Qtdq) ]]; then
-        run_with_animation "Removing orphaned packages..." "sudo pacman -Rns $(pacman -Qtdq) --noconfirm"
+    local orphans=$(pacman -Qtdq)
+    if [[ -n "$orphans" ]]; then
+        # Check for pacman lock
+        if [[ -f /var/lib/pacman/db.lck ]]; then
+            run_with_animation "Waiting for pacman database lock..." "while [ -f /var/lib/pacman/db.lck ]; do sleep 1; done"
+        fi
+        run_with_animation "Removing orphaned packages..." "sudo pacman -Rns $orphans --noconfirm"
     else
         run_with_animation "Checking for orphaned packages..." "sleep 0.5"
     fi
