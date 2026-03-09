@@ -280,6 +280,16 @@ perform_cleanup() {
         else
              run_with_animation "Emptying trash..." "rm -rf $HOME/.local/share/Trash/*"
         fi
+
+        # Terminal and REPL histories
+        if [[ -n "$SUDO_USER" ]]; then
+             local home_path="/home/$SUDO_USER"
+             run_with_animation "Clearing shell and REPL histories..." "sudo -u $SUDO_USER rm -f $home_path/.zsh_history $home_path/.bash_history $home_path/.python_history $home_path/.node_repl_history $home_path/.zsh_history_bad"
+             run_with_animation "Clearing shell completion caches..." "sudo -u $SUDO_USER rm -f $home_path/.zcompdump*"
+        else
+             run_with_animation "Clearing shell and REPL histories..." "rm -f $HOME/.zsh_history $HOME/.bash_history $HOME/.python_history $HOME/.node_repl_history $HOME/.zsh_history_bad"
+             run_with_animation "Clearing shell completion caches..." "rm -f $HOME/.zcompdump*"
+        fi
     fi
     
     # Measure end space
