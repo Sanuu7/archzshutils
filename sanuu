@@ -8,6 +8,10 @@ GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
+BOLD='\033[1m'
+DIM='\033[2m'
 NC='\033[0m' # No Color
 
 # ACPI Platform Profile Path
@@ -25,6 +29,175 @@ log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+# Render a compact progress bar. First argument is percent, second is bar width.
+draw_bar() {
+    local percent="$1"
+    local width="${2:-28}"
+    local filled=$(( percent * width / 100 ))
+    local empty=$(( width - filled ))
+    local bar=""
+
+    for ((i = 0; i < filled; i++)); do bar+="█"; done
+    for ((i = 0; i < empty; i++)); do bar+="░"; done
+
+    if [[ $percent -ge 90 ]]; then
+        echo -e "${RED}${bar}${NC}"
+    elif [[ $percent -ge 75 ]]; then
+        echo -e "${YELLOW}${bar}${NC}"
+    else
+        echo -e "${GREEN}${bar}${NC}"
+    fi
+}
+
+# Convert KiB values to a readable IEC unit.
+format_kib() {
+    local kib="${1:-0}"
+
+    awk -v kib="$kib" 'BEGIN {
+        split("KiB MiB GiB TiB PiB", units, " ")
+        value = kib
+        unit = 1
+        while (value >= 1024 && unit < 5) {
+            value /= 1024
+            unit++
+        }
+        if (value >= 100 || unit == 1) {
+            printf "%.0f %s", value, units[unit]
+        } else {
+            printf "%.1f %s", value, units[unit]
+        }
+    }'
+}
+
+spec_intro_animation() {
+    if [[ ! -t 1 ]]; then
+        return
+    fi
+
+    local frames=("◐" "◓" "◑" "◒")
+    tput civis 2>/dev/null || true
+    for i in {1..16}; do
+        printf "\r${CYAN}%s${NC} ${BOLD}scanning silicon, memory, and storage...${NC}" "${frames[$((i % 4))]}"
+        sleep 0.045
+    done
+    printf "\r%*s\r" 60 ""
+    tput cnorm 2>/dev/null || true
+}
+
+spec_card() {
+    local icon="$1"
+    local title="$2"
+    local subtitle="$3"
+    local used="$4"
+    local total="$5"
+    local percent="$6"
+    local accent="$7"
+    local bar
+    bar=$(draw_bar "$percent" 26)
+
+    echo -e "${accent}╭────────────────────────────────────────────╮${NC}"
+    printf "%b│%b %b%-40s%b%b│%b\n" "$accent" "$NC" "$accent" "$icon  $title" "$NC" "$accent" "$NC"
+    printf "%b│%b %-42s %b│%b\n" "$accent" "$DIM" "$subtitle" "$accent" "$NC"
+    printf "%b│%b %-12s %b%-12s%b %3s%% %b│%b\n" "$accent" "$NC" "$used used" "$DIM" "$total total" "$NC" "$percent" "$accent" "$NC"
+    printf "%b│%b %b                 %b│%b\n" "$accent" "$NC" "$bar" "$accent" "$NC"
+    echo -e "${accent}╰────────────────────────────────────────────╯${NC}"
+}
+
+read_memory_specs() {
+    local total_kib available_kib used_kib percent
+    total_kib=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
+    available_kib=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+    used_kib=$(( total_kib - available_kib ))
+    percent=$(( used_kib * 100 / total_kib ))
+
+    SPEC_RAM_USED=$(format_kib "$used_kib")
+    SPEC_RAM_TOTAL=$(format_kib "$total_kib")
+    SPEC_RAM_AVAILABLE=$(format_kib "$available_kib")
+    SPEC_RAM_PERCENT="$percent"
+}
+
+read_storage_specs() {
+    local home_dir df_summary filesystem_count total_kib used_kib available_kib percent
+    if [[ -n "$SUDO_USER" ]]; then
+        home_dir="/home/$SUDO_USER"
+    else
+        home_dir="$HOME"
+    fi
+
+    df_summary=$(df -k -P / "$home_dir" 2>/dev/null | tail -n +2 | sort -u -k1,1 | awk '
+        { total += $2; used += $3; available += $4; count++ }
+        END { printf "%d %d %d %d", total, used, available, count }
+    ')
+    read -r total_kib used_kib available_kib filesystem_count <<< "$df_summary"
+    percent=$(( used_kib * 100 / total_kib ))
+
+    SPEC_STORAGE_USED=$(format_kib "$used_kib")
+    SPEC_STORAGE_TOTAL=$(format_kib "$total_kib")
+    SPEC_STORAGE_AVAILABLE=$(format_kib "$available_kib")
+    SPEC_STORAGE_PERCENT="$percent"
+    if [[ "$filesystem_count" -gt 1 ]]; then
+        SPEC_STORAGE_MOUNT="/ + home"
+    else
+        SPEC_STORAGE_MOUNT="/ and home"
+    fi
+}
+
+read_vram_specs() {
+    local total_mib used_mib gpu_name total_kib used_kib percent
+
+    if command -v nvidia-smi &> /dev/null; then
+        local smi_line
+        smi_line=$(nvidia-smi --query-gpu=name,memory.total,memory.used --format=csv,noheader,nounits 2>/dev/null | head -n 1)
+        if [[ -n "$smi_line" ]]; then
+            IFS=',' read -r gpu_name total_mib used_mib <<< "$smi_line"
+            gpu_name=$(echo "$gpu_name" | xargs)
+            total_mib=$(echo "$total_mib" | xargs)
+            used_mib=$(echo "$used_mib" | xargs)
+            total_kib=$(( total_mib * 1024 ))
+            used_kib=$(( used_mib * 1024 ))
+        fi
+    fi
+
+    if [[ -z "$total_kib" ]]; then
+        for device in /sys/class/drm/card*/device; do
+            if [[ -r "$device/mem_info_vram_total" ]]; then
+                total_kib=$(( $(cat "$device/mem_info_vram_total") / 1024 ))
+                if [[ -r "$device/mem_info_vram_used" ]]; then
+                    used_kib=$(( $(cat "$device/mem_info_vram_used") / 1024 ))
+                else
+                    used_kib=0
+                fi
+                if command -v lspci &> /dev/null; then
+                    local pci_id
+                    pci_id=$(basename "$(readlink -f "$device")")
+                    gpu_name=$(lspci -s "$pci_id" 2>/dev/null | sed 's/.*: //')
+                fi
+                break
+            fi
+        done
+    fi
+
+    if [[ -n "$total_kib" && "$total_kib" -gt 0 ]]; then
+        percent=$(( used_kib * 100 / total_kib ))
+        SPEC_VRAM_USED=$(format_kib "$used_kib")
+        SPEC_VRAM_TOTAL=$(format_kib "$total_kib")
+        SPEC_VRAM_AVAILABLE=$(format_kib "$(( total_kib - used_kib ))")
+        SPEC_VRAM_PERCENT="$percent"
+        SPEC_GPU_NAME="${gpu_name:-Dedicated GPU}"
+        return
+    fi
+
+    if command -v lspci &> /dev/null; then
+        gpu_name=$(lspci | grep -Ei 'vga|3d|display' | head -n 1 | sed 's/.*: //')
+    fi
+
+    SPEC_VRAM_USED="shared"
+    SPEC_VRAM_TOTAL="system RAM"
+    SPEC_VRAM_AVAILABLE="dynamic"
+    SPEC_VRAM_PERCENT=0
+    SPEC_GPU_NAME="${gpu_name:-Integrated/shared graphics}"
+}
 
 # Animation function
 run_with_animation() {
@@ -559,6 +732,30 @@ cmd_profiles() {
     fi
 }
 
+# Subcommand: spec
+cmd_spec() {
+    spec_intro_animation
+    read_memory_specs
+    read_storage_specs
+    read_vram_specs
+
+    echo -e "${MAGENTA}${BOLD}╔══════════════════════════════════════════════╗${NC}"
+    echo -e "${MAGENTA}${BOLD}║              SANUU SPEC DECK                ║${NC}"
+    echo -e "${MAGENTA}${BOLD}╚══════════════════════════════════════════════╝${NC}"
+    echo ""
+
+    spec_card "VRAM" "Graphics Memory" "$SPEC_GPU_NAME" "$SPEC_VRAM_USED" "$SPEC_VRAM_TOTAL" "$SPEC_VRAM_PERCENT" "$MAGENTA"
+    echo -e "${DIM}     available: $SPEC_VRAM_AVAILABLE${NC}"
+    echo ""
+    spec_card "RAM " "System Memory" "live memory pressure" "$SPEC_RAM_USED" "$SPEC_RAM_TOTAL" "$SPEC_RAM_PERCENT" "$CYAN"
+    echo -e "${DIM}     available: $SPEC_RAM_AVAILABLE${NC}"
+    echo ""
+    spec_card "DISK" "Available Storage" "mounted at $SPEC_STORAGE_MOUNT" "$SPEC_STORAGE_USED" "$SPEC_STORAGE_TOTAL" "$SPEC_STORAGE_PERCENT" "$BLUE"
+    echo -e "${DIM}     available: $SPEC_STORAGE_AVAILABLE${NC}"
+    echo ""
+    echo -e "${GREEN}${BOLD}Status:${NC} Specs scanned cleanly."
+}
+
 # Subcommand: help
 cmd_help() {
     echo -e "${GREEN}Sanuu Command Tool${NC}"
@@ -572,6 +769,7 @@ cmd_help() {
     echo "  systemupdate  Update Repos, AUR, and Flatpaks"
     echo "  checkpackageupdates  Safe preview of available updates"
     echo "  battery       Show detailed battery health (Laptops)"
+    echo "  spec          Show VRAM, RAM, and available storage"
     echo "  spotify       Run SpotX Spotify unlocker"
     echo "  antigravity   Install/Update Antigravity (latest release)"
     echo "  profiles      List detected power profiles"
@@ -615,6 +813,9 @@ case "$1" in
         ;;
     battery)
         cmd_battery
+        ;;
+    spec)
+        cmd_spec
         ;;
     spotify)
         cmd_spotify

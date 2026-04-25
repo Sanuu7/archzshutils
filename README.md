@@ -14,6 +14,7 @@ A powerful, all-in-one utility script for Arch Linux to manage performance, main
 ### 📊 Health & Monitoring
 - **`sanuu health`**: A clean dashboard showing failed services, disk usage, and CPU temperature.
 - **`sanuu battery`**: Detailed life and health report for laptops (charge, health %, wattage, and cycles).
+- **`sanuu spec`**: Animated terminal spec deck for VRAM, RAM, and available storage.
 
 ### ⚡ Performance & Apps
 - **`sanuu profiles`**: Lists available ACPI power profiles (Performance, Balanced, Power-Saving).
